@@ -1,5 +1,5 @@
-import { chainConfig } from '../lib/chain/devnode.js';
-import { rewriteDevProxyUrl } from '../lib/proxy/dev.js';
+import { chainConfig } from 'privatepoker-hooks/config/chain/environments/devnode.js';
+import { rewriteDevProxyUrl } from 'privatepoker-hooks/config/proxy/devServer/dev.js';
 
 export const CHAIN_CONFIG = chainConfig;
 export const CHAIN_KEY = chainConfig.key;

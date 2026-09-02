@@ -2,7 +2,7 @@ import {
   P2P_MST_MESSAGE,
   RouteIntentGraph,
   normalizePeerId,
-} from '../lib/p2p_mst/index.js';
+} from 'privatepoker-hooks/networking/routing/p2p_mst/index.js';
 
 export class TestP2PMstNode {
   constructor(nodeId, options = {}) {

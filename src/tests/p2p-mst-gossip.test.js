@@ -6,7 +6,7 @@ import {
   ConnectionMstPlanner,
   makeP2PMstEdgeId,
   P2P_MST_ROUTE_STATE,
-} from '../lib/p2p_mst/index.js';
+} from 'privatepoker-hooks/networking/routing/p2p_mst/index.js';
 import { TestP2PMstNode } from './p2p-mst-test-node.js';
 
 const intent = (from, to) => ({

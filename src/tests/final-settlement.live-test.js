@@ -23,7 +23,7 @@ import {
   CHAIN_RPC_URL,
   liveDevnodeChain,
 } from './live-devnode-chain.js';
-import { toChipUnits } from '../lib/constants.js';
+import { toChipUnits } from 'privatepoker-hooks/config/constants/index.js';
 import {
   buildFinalHandSettlement,
   buildNextFinalVerification,
@@ -31,11 +31,11 @@ import {
   settlementContractArgs,
   tableAggregatePublicKey,
   tableAggregatePublicKeyContractArgs,
-} from '../hooks/useFinalVerification.js';
+} from 'privatepoker-hooks/react/hooks/useFinalVerification.js';
 import {
   POKER_HAND_STATE_SHUFFLE,
   POKER_HAND_STATE_FINISHED,
-} from '../lib/crum_pkr/index.js';
+} from 'privatepoker-hooks/poker/core/crum_pkr/index.js';
 import {
   HAND_ID,
   INITIAL_CHIPS,
@@ -64,8 +64,8 @@ const TEST_USDC_ABI = parseAbi([
   'function balanceOf(address account) view returns (uint256)',
 ]);
 
-const DEV_MNEMONIC = 'test test test test test test test test test test test junk';
-const DEV_OWNER_PRIVATE_KEY = '0xb6b15c8cb491557369f3c7d2c287b053eb229daa9c22138887752191c9520659';
+const DEV_MNEMONIC = process.env.PRIVATE_POKER_LIVE_MNEMONIC;
+const DEV_OWNER_PRIVATE_KEY = process.env.PRIVATE_POKER_LIVE_OWNER_PRIVATE_KEY;
 const LOBBY_ID = 1n;
 const NUM_PLAYERS = Number(process.env.PRIVATE_POKER_LIVE_PLAYERS ?? 3);
 const BUY_IN = toChipUnits(INITIAL_CHIPS);
@@ -251,7 +251,12 @@ async function preparePlayer({ publicClient, walletClient, owner, account, annou
   assert.ok(chips >= BUY_IN, `Player ${account.address} has insufficient chips`);
 }
 
-test('live final settlement creates table, joins players, starts hand, and settles on-chain', async () => {
+test('live final settlement creates table, joins players, starts hand, and settles on-chain', async (t) => {
+  if (!DEV_MNEMONIC || !DEV_OWNER_PRIVATE_KEY) {
+    t.skip('Set PRIVATE_POKER_LIVE_MNEMONIC and PRIVATE_POKER_LIVE_OWNER_PRIVATE_KEY to run this live test.');
+    return;
+  }
+
   assert.equal(CHAIN_KEY, 'devnode', 'live final settlement test expects devnode chain config');
   assert.ok(isAddress(PRIVATE_POKER_CONTRACT_ADDRESS), 'PrivatePoker diamond address is not configured');
   assert.ok(isAddress(PPDC_CONTRACT_ADDRESS), 'TEST_USDC/PPDC address is not configured');

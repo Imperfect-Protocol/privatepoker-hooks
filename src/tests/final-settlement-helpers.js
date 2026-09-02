@@ -3,15 +3,15 @@ import assert from 'node:assert/strict';
 import {
   PokerAction,
   PokerClientState,
-} from '../lib/crum_net/index.js';
+} from 'privatepoker-hooks/poker/core/crum_net/index.js';
 import {
   POKER_HOLDEM_ROUNDS,
   PokerTable,
-} from '../lib/crum_pkr/index.js';
+} from 'privatepoker-hooks/poker/core/crum_pkr/index.js';
 import {
   bytesToHex,
   make_public_key_from_signing_key,
-} from '../lib/crum_bls/index.js';
+} from 'privatepoker-hooks/crypto/bls/index.js';
 
 export const TABLE_SIGNING_KEYS = [17n, 19n, 23n, 29n, 31n, 37n];
 export const HAND_SIGNING_KEYS = [41n, 43n, 47n, 53n, 59n, 61n];

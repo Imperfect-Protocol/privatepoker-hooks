@@ -10,12 +10,12 @@ import {
   tableAggregatePublicKey,
   tableAggregatePublicKeyContractArgs,
   tableAggregatePublicKeyDigest,
-} from '../hooks/useFinalVerification.js';
-import { toChipUnits } from '../lib/constants.js';
+} from 'privatepoker-hooks/react/hooks/useFinalVerification.js';
+import { toChipUnits } from 'privatepoker-hooks/config/constants/index.js';
 import {
   POKER_HAND_STATE_FINISHED,
   POKER_HAND_STATE_SHUFFLE,
-} from '../lib/crum_pkr/index.js';
+} from 'privatepoker-hooks/poker/core/crum_pkr/index.js';
 import {
   HAND_ID,
   playFinishedP2pHand,

@@ -18,7 +18,7 @@ import {
   make_signature_from_compressed_slice,
   sign,
   verify,
-} from '../lib/crum_bls/index.js';
+} from 'privatepoker-hooks/crypto/bls/index.js';
 
 const HASH_TO_CURVE_ABI = parseAbi([
   'function toCurve(bytes digest) returns (bytes)',

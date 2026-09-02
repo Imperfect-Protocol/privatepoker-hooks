@@ -1,8 +1,14 @@
-# PrivatePoker Hooks Architecture
+# PrivatePoker Hooks
 
 `privatepoker-hooks` is the publishable backbone of Private Poker. It contains the reusable peer-to-peer networking, mesh signalling, blockchain access, cryptographic helpers, poker protocol code, and React orchestration hooks that a frontend can compose into an application.
 
 The package deliberately does not contain the Private Poker product UI. A consuming app can create lobbies, join tables, establish WebRTC connections, exchange poker protocol messages, verify final hand state, and write settlement transactions, but the app owns visual presentation and user flow.
+
+
+**Author:** [Sonia Code](https://github.com/sadhbh-c0d3)
+
+*Copyright (c) 2026 Sonia Kolasinska / Imperfect Protocol. All Rights Reserved.*
+
 
 ## Architectural Goals
 

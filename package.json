@@ -1,0 +1,67 @@
+{
+  "name": "privatepoker-hooks",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.js",
+  "module": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./contexts/*.jsx": "./src/contexts/*.jsx",
+    "./contexts/*": [
+      "./src/contexts/*.jsx",
+      "./src/contexts/*"
+    ],
+    "./hooks/*.js": "./src/hooks/*.js",
+    "./hooks/*": [
+      "./src/hooks/*.js",
+      "./src/hooks/*"
+    ],
+    "./lib/*.js": "./src/lib/*.js",
+    "./lib/*": [
+      "./src/lib/*.js",
+      "./src/lib/*/index.js",
+      "./src/lib/*"
+    ],
+    "./tests/*.js": "./src/tests/*.js",
+    "./tests/*": [
+      "./src/tests/*.js",
+      "./src/tests/*"
+    ],
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "build": "vite build",
+    "lint": "eslint .",
+    "test": "node --test src/tests/*.test.js",
+    "test:live": "node --test src/tests/*.live-test.js"
+  },
+  "dependencies": {
+    "@noble/bls12-381": "^1.4.0",
+    "@noble/curves": "^1.9.1",
+    "@noble/hashes": "^1.8.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@reown/appkit": "^1.8.19",
+    "@vitejs/plugin-react": "^6.0.1",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.4.0",
+    "react": "^19.2.4",
+    "react-router-dom": "^7.13.2",
+    "viem": "^2.47.6",
+    "vite": "^8.0.1",
+    "wagmi": "^3.6.0"
+  },
+  "peerDependencies": {
+    "@reown/appkit": "^1.8.0",
+    "react": "^19.0.0",
+    "react-router-dom": "^7.0.0",
+    "viem": "^2.0.0",
+    "wagmi": "^3.0.0"
+  }
+}

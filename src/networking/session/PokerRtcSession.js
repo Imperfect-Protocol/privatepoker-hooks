@@ -17,6 +17,7 @@ import {
   BackgroundP2PConnectionEstablisher,
   MeshRelayConnectionEstablisher,
   P2PConnectionCoordinator,
+  POKE_CONNECTION_TIMEOUT_MS,
 } from 'privatepoker-hooks/networking/connection/p2p_connection';
 import { makeMeshRtcConfig } from 'privatepoker-hooks/config/mesh';
 
@@ -53,7 +54,6 @@ const SUBSCRIPTION_STATE = {
 const RTC_CONTROL_MESSAGE = 'RTC_CONTROL';
 const TRANSPORT_SIGNATURE_SCHEME = 'BLS12-381-G2-PK-G1-SIG';
 const MAX_PUBLISHED_MESSAGE_CACHE = 200;
-const GOSSIP_DISCOVERY_FALLBACK_MS = 1200;
 
 const normalizeAddress = (value) => value?.toLowerCase() ?? '';
 const linkKey = (peerAddress, direction) => `${direction}:${normalizeAddress(peerAddress)}`;
@@ -145,7 +145,7 @@ function badSignaturePayload(payload) {
   return badPayload;
 }
 
-function waitForIceGatheringComplete(pc, timeoutMs = 4000) {
+function waitForIceGatheringComplete(pc, timeoutMs = POKE_CONNECTION_TIMEOUT_MS) {
   return new Promise((resolve) => {
     if (pc.iceGatheringState === 'complete') {
       resolve();
@@ -212,7 +212,7 @@ export class PokerRtcSession {
     this.snapshotKey = '';
     this.lookingForPeers = new Set();
     this.announceTimer = null;
-    this.gossipFallbackTimers = new Map();
+    this.connectionRetryMachines = new Map();
     this.backgroundP2PEstablisher = new BackgroundP2PConnectionEstablisher({
       session: this,
       sessionPool: this.sessionPool,
@@ -223,8 +223,9 @@ export class PokerRtcSession {
     this.connectionCoordinator = new P2PConnectionCoordinator({
       backgroundP2P: this.backgroundP2PEstablisher,
       meshRelay: this.meshRelayEstablisher,
-      fallbackTimers: this.gossipFallbackTimers,
-      fallbackMs: GOSSIP_DISCOVERY_FALLBACK_MS,
+      retryMachines: this.connectionRetryMachines,
+      timeoutMs: POKE_CONNECTION_TIMEOUT_MS,
+      onChange: () => this.emitState(),
     });
     this.config = {
       playerAddress: undefined,
@@ -338,33 +339,9 @@ export class PokerRtcSession {
     this.meshRelayEstablisher.announce(lookingFor);
   }
 
-  scheduleMeshFallbackForGossip(lookingFor) {
-    lookingFor.forEach((peerAddress) => {
-      const peerKey = normalizeAddress(peerAddress);
-      if (!peerKey) return;
-
-      const existingTimer = this.gossipFallbackTimers.get(peerKey);
-      if (existingTimer) clearTimeout(existingTimer);
-
-      const timer = setTimeout(() => {
-        this.gossipFallbackTimers.delete(peerKey);
-        if (!this.lookingForPeers.has(peerKey)) return;
-        if (this.connectedLinks.has(linkKey(peerAddress, RTC_LINK.INBOUND))) return;
-        if (this.backgroundP2PEstablisher.hasKnownRoute(peerAddress)) return;
-        this.announceMeshRoutes([peerAddress]);
-      }, GOSSIP_DISCOVERY_FALLBACK_MS);
-      this.gossipFallbackTimers.set(peerKey, timer);
-    });
-  }
-
   markGossipRouteFound(peerAddress) {
     const peerKey = normalizeAddress(peerAddress);
     if (!peerKey) return;
-
-    const timer = this.gossipFallbackTimers.get(peerKey);
-    if (timer) clearTimeout(timer);
-    this.gossipFallbackTimers.delete(peerKey);
-    this.lookingForPeers.delete(peerKey);
   }
 
   hasPendingP2PIntent(peerAddress) {
@@ -456,6 +433,8 @@ export class PokerRtcSession {
       outboundState: firstOutboundConnected ? SUBSCRIPTION_STATE.CONNECTED : firstOutbound?.state ?? 'None',
       inboundPeerAddress: firstInbound?.playerAddress ?? null,
       outboundPeerAddress: firstOutbound?.playerAddress ?? null,
+      inboundRetryState: firstInbound ? this.connectionCoordinator.snapshotFor(firstInbound.playerAddress) : null,
+      connectionRetryStates: this.connectionCoordinator.snapshots(),
       peerStates,
       remoteMediaStreams,
       mediaSnapshotVersion: this.mediaSnapshotVersion,
@@ -490,6 +469,8 @@ export class PokerRtcSession {
       snapshot.expectedPeerCount,
       snapshot.inboundState,
       snapshot.outboundState,
+      JSON.stringify(snapshot.inboundRetryState),
+      JSON.stringify(snapshot.connectionRetryStates),
       snapshot.connectedPeerAddresses.join('|'),
       JSON.stringify(snapshot.peerStates),
       snapshot.mediaSnapshotVersion,
@@ -1060,6 +1041,7 @@ export class PokerRtcSession {
     this.connectedLinks.add(key);
     this.lookingForPeers.delete(normalizeAddress(peerAddress));
     this.hasConnectionError = false;
+    this.connectionCoordinator.cancel(peerAddress);
     if (direction === RTC_LINK.INBOUND) {
       this.clearOfferTimeout(peerAddress);
     }
@@ -1444,8 +1426,8 @@ export class PokerRtcSession {
     this.lookingForPeers.add(peerKey);
     this.resetPeerLink(peerPlayerAddress, RTC_LINK.INBOUND, 'poke');
 
-    this.logActivity(`Poke action: re-announcing peer discovery for ${formatPeer(peerKey)}`);
-    this.schedulePeerDiscovery();
+    this.logActivity(`Poke action: retrying peer discovery for ${formatPeer(peerKey)}`);
+    this.connectionCoordinator.poke([peerPlayerAddress]);
   }
 
   async sendAccept(peerAddress, peerPubKey, offerSdp, direction = RTC_LINK.OUTBOUND, { viaDataChannel = false, viaPool = false, enqueue = null, flowId = null } = {}) {
@@ -1701,7 +1683,7 @@ export class PokerRtcSession {
 
   resetForTable() {
     if (this.announceTimer) clearTimeout(this.announceTimer);
-    this.gossipFallbackTimers.forEach((timer) => clearTimeout(timer));
+    this.connectionCoordinator.clear();
     this.sessionPool.unregisterSession(this);
     this.inboundSubscriptions.forEach((subscription) => {
       if (subscription.webRtcChannel) {
@@ -1758,7 +1740,7 @@ export class PokerRtcSession {
     this.publishedMessages.clear();
     this.seenDisagreements.clear();
     this.lookingForPeers.clear();
-    this.gossipFallbackTimers.clear();
+    this.connectionRetryMachines.clear();
     this.localMediaStream = null;
     this.remoteMediaStreams.clear();
     this.mediaSnapshotVersion += 1;

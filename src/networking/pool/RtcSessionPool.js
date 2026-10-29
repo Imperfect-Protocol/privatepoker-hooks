@@ -1,5 +1,6 @@
 import { hexToBytes, toHex } from 'viem';
 import { decryptFromPeer, encryptForPeer, normalizePeerPublicKey } from 'privatepoker-hooks/networking/signaling/SignalEncryption';
+import { POKE_CONNECTION_TIMEOUT_MS } from 'privatepoker-hooks/networking/connection/p2p_connection/P2PConnectionRetryStateMachine.js';
 import {
   P2P_MST_MESSAGE,
   RouteIntentGraph,
@@ -17,9 +18,9 @@ const RTC_POOL_BROADCAST_CHANNEL = 'private-poker:rtc-session-pool';
 const DEFAULT_TTL = 6;
 const DEFAULT_P2P_MST_EDGE_TTL_MS = 120_000;
 const MAX_SEEN_MESSAGES = 500;
-const DELIVERY_TIMEOUT_MS = 800;
-const SILENT_DELIVERY_TIMEOUT_MS = 8000;
-const LOBBY_ROUTE_TIMEOUT_MS = 10000;
+const DELIVERY_TIMEOUT_MS = POKE_CONNECTION_TIMEOUT_MS;
+const SILENT_DELIVERY_TIMEOUT_MS = POKE_CONNECTION_TIMEOUT_MS;
+const LOBBY_ROUTE_TIMEOUT_MS = POKE_CONNECTION_TIMEOUT_MS;
 const WORKER_HEARTBEAT_MS = 5000;
 const DEFAULT_MAX_CONNECTION_REQUESTS = 1;
 const DEFAULT_MAX_SILENT_CONNECTIONS = 12;
@@ -80,7 +81,7 @@ const waitForIceGatheringComplete = (pc) => {
       }
     };
 
-    timeout = setTimeout(finish, 8000);
+    timeout = setTimeout(finish, POKE_CONNECTION_TIMEOUT_MS);
     pc.addEventListener('icegatheringstatechange', handleStateChange);
   });
 };
@@ -971,6 +972,12 @@ class RtcSessionPool {
     ));
   }
 
+  hasOpenP2PGossipLink() {
+    return [...this.links.values()].some((links) => (
+      links.some((link) => link.channel?.readyState === 'open')
+    ));
+  }
+
   remember(messageId) {
     if (!messageId) return false;
     if (this.seenMessages.has(messageId)) return false;
@@ -1060,11 +1067,11 @@ class RtcSessionPool {
     });
   }
 
-  resolveDelivery(messageId) {
+  resolveDelivery(messageId, delivered = true) {
     const resolve = this.pendingDeliveries.get(messageId);
     if (resolve) {
       this.pendingDeliveries.delete(messageId);
-      resolve(true);
+      resolve(delivered);
     }
   }
 
@@ -1728,6 +1735,7 @@ class RtcSessionPool {
     });
 
     this.remember(message.id);
+    const delivery = this.waitForDelivery(message.id, deliveryTimeoutMs);
     logPool('send encrypted signal', {
       signalId: message.id,
       from: formatPeer(originAddress),
@@ -1752,8 +1760,11 @@ class RtcSessionPool {
       sentToBroadcast,
       sentToWorker,
     });
-    if (!sentLocally && !sentToBroadcast && !sentToWorker) return false;
-    const delivered = await this.waitForDelivery(message.id, deliveryTimeoutMs);
+    if (!sentLocally && !sentToBroadcast && !sentToWorker) {
+      this.resolveDelivery(message.id, false);
+      return false;
+    }
+    const delivered = await delivery;
     logPool(`send encrypted signal ${delivered ? 'delivered' : 'undelivered'}`, {
       signalId: message.id,
       to: formatPeer(targetAddress),

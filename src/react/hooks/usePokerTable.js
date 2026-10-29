@@ -13,7 +13,6 @@ import {
 } from 'privatepoker-hooks/crypto/bls';
 import {
   PokerAction,
-  PokerActionEnvelopeWire,
   PokerClientState,
   poker_action_wire_to_submit,
 } from 'privatepoker-hooks/poker/core/crum_net';
@@ -42,6 +41,16 @@ import {
   tableProtocolStateType,
 } from 'privatepoker-hooks/poker/table/TableProtocolState.js';
 import { getBlindsForBuyin } from 'privatepoker-hooks/poker/lobby/Stakes';
+import { buildAutomaticPokerAction } from 'privatepoker-hooks/poker/hand/PokerProtocolActionBuilder.js';
+import {
+  decodePokerWire as decodeWire,
+  encodePokerWire as encodeWire,
+  handHistorySequenceNumber,
+  handHistoryTipKey,
+  hexPoint,
+  historyEntryPayload,
+  wireHistoryKey,
+} from 'privatepoker-hooks/poker/hand/PokerHandHistoryCodec.js';
 import { fromChipUnits } from 'privatepoker-hooks/config/constants';
 
 const HISTORY_MESSAGE = 'History';
@@ -54,7 +63,6 @@ const ACTION_SIGNATURE_SCHEME = 'BLS12-381-G2-PK-G1-SIG';
 const BETTING_UI_STATES = new Set(['PreFlop', 'Flop', 'Turn', 'River']);
 const BAD_UNMASK_G1 = G1.BASE.toRawBytes(true);
 const HAND_ID = 1;
-const textEncoder = new TextEncoder();
 
 function shallowEqual(left, right) {
   const leftKeys = Object.keys(left ?? {});
@@ -94,22 +102,6 @@ function createCryptoRng() {
     crypto.getRandomValues(bytes);
     return bytes[0] / 0x100000000;
   };
-}
-
-function hexPoint(bytes) {
-  return bytesToHex(bytes, { prefix: true });
-}
-
-function bytesPoint(hex) {
-  return hexToBytes(hex);
-}
-
-function encodeCardSet(cards) {
-  return cards.map(hexPoint);
-}
-
-function decodeCardSet(cards) {
-  return cards.map(bytesPoint);
 }
 
 function refreshWireSubmit(wire) {
@@ -182,197 +174,19 @@ function corruptUnmaskWire(wire) {
   return false;
 }
 
-function encodeWire(wire) {
-  const encoded = {
-    table_id: wire.table_id,
-    hand_id: wire.hand_id,
-    from: wire.from,
-    sequence: wire.sequence,
-    sequence_number: wire.sequence_number ?? null,
-    expected_state: wire.expected_state,
-    log_lines: wire.log_lines,
-  };
-
-  if (wire.nop) {
-    return {
-      ...encoded,
-      nop: wire.nop,
-    };
-  }
-
-  const action = wire.action;
-  encoded.action = { type: action.type, player: action.player };
-
-  switch (action.type) {
-    case 'SubmitShuffledDeck':
-      encoded.action.deck_g1_compressed = encodeCardSet(action.deck_g1_compressed);
-      break;
-    case 'SubmitPlayerCards':
-    case 'SubmitShowdownCards':
-      encoded.action.player_cards_g1_compressed = action.player_cards_g1_compressed.map(encodeCardSet);
-      break;
-    case 'SubmitCommunityCards':
-      encoded.action.round = action.round;
-      encoded.action.cards_g1_compressed = encodeCardSet(action.cards_g1_compressed);
-      break;
-    case 'SubmitBet':
-      encoded.action.amount = action.amount;
-      break;
-    case 'SubmitPublicKey':
-      encoded.action.public_key_g2_compressed = hexPoint(action.public_key_g2_compressed);
-      encoded.action.traces = action.traces;
-      break;
-    default:
-      break;
-  }
-
-  encoded.submit = poker_action_wire_to_submit(encoded.action);
-  delete encoded.action;
-
-  return encoded;
-}
-
-function decodeWire(encoded) {
-  if (encoded.nop) {
-    const wire = new PokerActionEnvelopeWire({
-      table_id: encoded.table_id,
-      hand_id: encoded.hand_id,
-      from: encoded.from,
-      sequence: encoded.sequence,
-      sequence_number: encoded.sequence_number ?? null,
-      expected_state: encoded.expected_state,
-      nop: encoded.nop,
-      log_lines: encoded.log_lines ?? [],
-    });
-    return wire;
-  }
-
-  const action = encoded.action ? { ...encoded.action } : null;
-
-  if (action) {
-    switch (action.type) {
-      case 'SubmitShuffledDeck':
-        action.deck_g1_compressed = decodeCardSet(action.deck_g1_compressed);
-        break;
-      case 'SubmitPlayerCards':
-      case 'SubmitShowdownCards':
-        action.player_cards_g1_compressed = action.player_cards_g1_compressed.map(decodeCardSet);
-        break;
-      case 'SubmitCommunityCards':
-        action.cards_g1_compressed = decodeCardSet(action.cards_g1_compressed);
-        break;
-      case 'SubmitPublicKey':
-        action.public_key_g2_compressed = bytesPoint(action.public_key_g2_compressed);
-        break;
-      default:
-        break;
-    }
-  }
-
-  return new PokerActionEnvelopeWire({
-    table_id: encoded.table_id,
-    hand_id: encoded.hand_id,
-    from: encoded.from,
-    sequence: encoded.sequence,
-    sequence_number: encoded.sequence_number ?? null,
-    expected_state: encoded.expected_state,
-    action,
-    submit: action ? encoded.submit : decodeSubmit(encoded.submit),
-    log_lines: encoded.log_lines ?? [],
-  });
-}
-
-function decodeSubmit(submit) {
-  if (!submit) return null;
-  const args = [...(submit.args ?? submit.data?.args ?? [])];
-
-  switch (submit.method) {
-    case 'submit_shuffled_deck':
-      args[1] = decodeCardSet(args[1]);
-      break;
-    case 'submit_player_cards':
-    case 'submit_player_cards_showdown':
-      args[1] = args[1].map(decodeCardSet);
-      break;
-    case 'submit_community_cards':
-      args[2] = decodeCardSet(args[2]);
-      break;
-    case 'submit_public_key':
-      args[1] = bytesPoint(args[1]);
-      break;
-    default:
-      break;
-  }
-
-  return {
-    method: submit.method,
-    args,
-  };
-}
-
-function canonicalize(value) {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (value && typeof value === 'object') {
-    return Object.keys(value)
-      .filter((key) => value[key] !== undefined)
-      .sort()
-      .reduce((acc, key) => {
-        acc[key] = canonicalize(value[key]);
-        return acc;
-      }, {});
-  }
-  return value;
-}
-
-function canonicalJson(value) {
-  return JSON.stringify(canonicalize(value));
-}
-
 function ensureHexPrefix(value) {
   const normalized = String(value ?? '');
   return normalized.startsWith('0x') ? normalized : `0x${normalized}`;
-}
-
-function historyEntryPayload(wire) {
-  return textEncoder.encode(canonicalJson({
-    type: 'PokerHandAction',
-    wire,
-  }));
-}
-
-function wireHistoryKey(wire) {
-  if (!wire) return '';
-  return [
-    wire.hand_id,
-    wire.sequence_number ?? '',
-    wire.from ?? '',
-    wire.sequence ?? '',
-    wire.nop ? 'nop' : wire.submit?.method ?? wire.action?.type ?? 'action',
-  ].join(':');
 }
 
 function tableSequenceNumber(game) {
   return Number(game?.clientState?.table?.sequence_number ?? 0);
 }
 
-function handHistorySequenceNumber(historyEntries = []) {
-  return Math.max(
-    0,
-    ...historyEntries.map((entry) => Number(entry?.sequence_number ?? entry?.wire?.sequence_number ?? 0)),
-  );
-}
-
-function handHistoryTipKey({ tableId, handId, historyEntries = [] } = {}) {
-  const orderedEntries = [...historyEntries]
-    .sort((left, right) => Number(left.sequence_number ?? 0) - Number(right.sequence_number ?? 0));
-  const lastEntry = orderedEntries.at(-1);
-  return [
-    tableId ?? '',
-    handId ?? '',
-    handHistorySequenceNumber(orderedEntries),
-    orderedEntries.length,
-    wireHistoryKey(lastEntry?.wire),
-  ].join(':');
+function needsActiveHandTranscript(game, historyEntries = []) {
+  return Number(game?.clientState?.hand_id ?? 0) > 0
+    && tableSequenceNumber(game) === 0
+    && historyEntries.length === 0;
 }
 
 function makePokerTable(numPlayers, buyIn, smallBlind) {
@@ -1138,19 +952,12 @@ export function usePokerTable({
       ? tableCurrentHandRef.current
       : 0;
     const previousGame = gameRef.current;
-    const previousHand = previousGame?.clientState?.current_hand?.();
-    const recoveredHandState = chainCurrentHand > 0
-      && Number(previousGame?.clientState?.hand_id ?? 0) === chainCurrentHand
-      && previousHand
-      && !previousHand.get_current_state?.().is_finished?.();
     const initialProtocolState = chainCurrentHand === 0
       ? TableProtocolState.tableAggregatePublicKey()
-      : recoveredHandState
-        ? TableProtocolState.handInProgress({
-          handId: chainCurrentHand,
-          handSetup: previousGame?.currentHandSetup ?? null,
-        })
-        : TableProtocolState.startHand({ handId: chainCurrentHand + 1 });
+      : TableProtocolState.handInProgress({
+        handId: chainCurrentHand,
+        handSetup: previousGame?.currentHandSetup ?? null,
+      });
 
     const pokerTable = makePokerTable(numPlayers, buyIn, smallBlind);
     if (!pokerTable) return null;
@@ -1816,75 +1623,12 @@ export function usePokerTable({
   }, [appendGameLog, appendTraceLines, applyDebugCheatsToWire, publishWire, updateView]);
 
   const buildAutomaticAction = useCallback((game) => {
-    const hand = game.clientState.current_hand();
-    const pokerState = hand.get_current_state().to_enum();
-    const playerIndex = game.clientState.player_index;
-
-    if ('player' in pokerState && pokerState.player !== playerIndex) return null;
-
-    switch (pokerState.type) {
-      case 'Shuffle': {
-        const cards = pokerState.is_dealer
-          ? hand.get_poker_deck().masked_cards()
-          : hand.get_shuffled_deck().clone();
-        cards.mask(game.signingKey);
-        game.shuffleTrace = cards.shuffle_traced(createCryptoRng());
-        return {
-          action: PokerAction.SubmitShuffledDeck({ player: playerIndex, deck: cards }),
-          logLines: [`Shuffle on Player ${playerIndex + 1} (is_dealer=${pokerState.is_dealer})`],
-        };
-      }
-      case 'UnmaskHoleCards': {
-        const cards = hand.get_player_cards().map((cardSet) => cardSet.clone());
-        cards.forEach((cardSet, index) => {
-          if (index !== playerIndex) cardSet.unmask(game.signingKey);
-        });
-        return {
-          action: PokerAction.SubmitPlayerCards({ player: playerIndex, cards }),
-          logLines: [`Unmask Hole Cards on Player ${playerIndex + 1}`],
-        };
-      }
-      case 'UnmaskCommunityCards': {
-        const cards = hand.get_community_cards(pokerState.round)?.clone();
-        if (!cards) throw new Error('No community cards for round');
-        cards.unmask(game.signingKey);
-        return {
-          action: PokerAction.SubmitCommunityCards({
-            player: playerIndex,
-            round: pokerState.round,
-            cards,
-          }),
-          logLines: [`Round ${pokerState.round + 1} Unmask Community Cards on Player ${playerIndex + 1}`],
-        };
-      }
-      case 'UnmaskShowdown': {
-        const cards = hand.get_player_cards().map((cardSet) => cardSet.clone());
-        cards[playerIndex].unmask(game.signingKey);
-        return {
-          action: PokerAction.SubmitShowdownCards({ player: playerIndex, cards }),
-          logLines: [`Unmask Showdown on Player ${playerIndex + 1}`],
-        };
-      }
-      case 'SubmitPublicKey': {
-        const traces = game.shuffleTrace
-          ?? reconstructShuffleTrace(hand, playerIndex, game.signingKey);
-        if (!traces) return null;
-        game.shuffleTrace = traces;
-        return {
-          action: PokerAction.SubmitPublicKey({
-            player: playerIndex,
-            public_key: game.publicKey,
-            traces,
-          }),
-          logLines: [`Submit Public Key on Player ${playerIndex + 1}`],
-        };
-      }
-      case 'Bet':
-      case 'Finished':
-        return null;
-      default:
-        return null;
-    }
+    return buildAutomaticPokerAction(game, {
+      rng: createCryptoRng(),
+      resolveShuffleTrace: ({ hand, playerIndex, signingKey }) => (
+        reconstructShuffleTrace(hand, playerIndex, signingKey)
+      ),
+    });
   }, []);
 
   const publishSettleHandMessage = useCallback((game, finalVerification, handId = null) => {
@@ -2054,6 +1798,20 @@ export function usePokerTable({
               confirmations: [],
             }));
             publishStartHandMessage(game, null, nextHandId);
+            if (game.clientState.player_index === 0) {
+              void Promise.resolve(ensureOnChainStartHand(game))
+                .then((complete) => {
+                  if (complete) updateView({ force: true });
+                })
+                .catch((error) => {
+                  appendGameLog(
+                    `Start hand failed: ${formatChainError(error)}`,
+                    'Game',
+                    'error',
+                  );
+                  updateView({ force: true });
+                });
+            }
           }
           updateView({ force: true });
         });
@@ -2086,6 +1844,7 @@ export function usePokerTable({
     publishTableCompleteMessage,
     publishSettleHandMessage,
     publishStartHandMessage,
+    ensureOnChainStartHand,
     requiredStartHandSeats,
     senderForSeat,
     startCountdown,
@@ -2233,6 +1992,7 @@ export function usePokerTable({
     const orderedEntries = [...historyEntries]
       .sort((left, right) => Number(left.sequence_number ?? 0) - Number(right.sequence_number ?? 0));
     let latestAppliedAction = null;
+    let appliedAnyAction = false;
 
     for (const entry of orderedEntries) {
       if (!verifyHistoryEntrySignature(entry)) {
@@ -2277,6 +2037,7 @@ export function usePokerTable({
 
       const { applied, result } = appliedResult;
       if (applied) {
+        appliedAnyAction = true;
         rememberWire(wire, entry);
         if (wire?.action?.type === 'SubmitPublicKey') {
           game.publicKeySubmissions ??= new Map();
@@ -2318,6 +2079,18 @@ export function usePokerTable({
       if (tokenRing.targetsCurrentSeat(tokenMessage)) {
         await submitFinalVerificationRound(game);
       }
+    } else if (
+      appliedAnyAction
+      && ![
+        TABLE_PROTOCOL_STATE_HAND_DISPUTED,
+        TABLE_PROTOCOL_STATE_SETTLE_HAND,
+        TABLE_PROTOCOL_STATE_TABLE_COMPLETE,
+      ].includes(protocolType(game))
+    ) {
+      transitionTableProtocol(game, TableProtocolState.handInProgress({
+        handId: game.clientState.hand_id,
+        handSetup: game.currentHandSetup,
+      }));
     }
     updateView({ force: true });
     return true;
@@ -2493,18 +2266,27 @@ export function usePokerTable({
           updateView({ force: true });
           return true;
         }
-        const keyedGame = await ensureKeys(Number(message.hand_number ?? message.hand_id ?? HAND_ID));
+        const targetHandId = Number(message.hand_number ?? message.hand_id ?? HAND_ID);
+        const keyedGame = await ensureKeys(targetHandId);
         const targetGame = keyedGame ?? game;
-        tokenRing.applyCursor(targetGame, message);
+        const localHandId = Number(targetGame.clientState?.hand_id ?? 0);
+        if (
+          targetHandId <= localHandId
+          && tableSequenceNumber(targetGame) > 0
+          && !targetGame.clientState?.current_hand?.()?.get_current_state?.()?.is_finished?.()
+        ) {
+          updateView({ force: true });
+          return true;
+        }
         transitionTableProtocol(targetGame, TableProtocolState.startHand({
-          handId: Number(message.hand_number ?? message.hand_id ?? HAND_ID),
+          handId: targetHandId,
           confirmations: message.confirmations ?? startHandState(targetGame).confirmations ?? [],
         }));
         if (message.seat_no != null && message.tx) {
           recordStartHandConfirmation(
             targetGame,
             Number(message.seat_no),
-            Number(message.hand_number ?? message.hand_id ?? HAND_ID),
+            targetHandId,
             message.tx,
           );
         }
@@ -2796,18 +2578,12 @@ export function usePokerTable({
 
     if (!connected) {
       if (wasConnected) pendingHistorySyncRef.current = true;
-      effectInitializedRef.current = false; // Reset lock if disconnected
+      effectInitializedRef.current = false;
       return;
     }
 
-    // Prevent running repeatedly on every render if already initialized for this connection
     if (effectInitializedRef.current) return;
     effectInitializedRef.current = true;
-
-    if (
-      wasConnected
-      && protocolType(gameRef.current) !== TABLE_PROTOCOL_STATE_TABLE_AGGREGATE_PUBLIC_KEY
-    ) return;
 
     ensureKeys().then(async (game) => {
       if (!game) return;
@@ -2819,7 +2595,10 @@ export function usePokerTable({
         return;
       }
       if (!await ensureTableAggregatePublicKey(game)) return;
-      if (pendingHistorySyncRef.current) {
+      if (
+        pendingHistorySyncRef.current
+        || needsActiveHandTranscript(game, handHistoryRef.current ?? [])
+      ) {
         pendingHistorySyncRef.current = false;
         sendHistorySync();
         return;
